@@ -1,0 +1,71 @@
+name: 编译mipsel版speedtest-go
+
+on:
+  schedule:
+    - cron: '0 3 * * *'
+  workflow_dispatch:
+env:
+  TZ: Asia/Shanghai
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    outputs:
+      ver: ${{ steps.getversion.outputs.ver }}
+      cver: ${{ steps.getversion.outputs.cver }}
+    steps:
+      -
+        name: 检查版本
+        id: getversion
+        run: |
+          ver=`curl https://api.github.com/repos/showwin/speedtest-go/releases/latest | jq -r '.tag_name'`
+          cver=`curl https://api.github.com/repos/lmq8267/speedtest-go/releases/latest | jq -r '.tag_name'`
+          echo "ver=${ver}" >> $GITHUB_OUTPUT
+          echo "cver=${cver}" >> $GITHUB_OUTPUT
+
+  build:
+    runs-on: ubuntu-latest
+    needs: check
+    if: ${{ needs.check.outputs.ver != needs.check.outputs.cver }}
+    steps:
+      - name: 获取最新Go
+        run: |
+          latest_version=$(curl -L -k -s https://golang.org/dl/?mode=json | grep -m 1 -o '"version": "[^"]*' | sed 's/"version": "//' | tr -d 'go" ')
+          echo "go版本=$latest_version"
+          echo "gotag=$latest_version" >> $GITHUB_ENV
+      - name: 安装go
+        uses: actions/setup-go@v4
+        with:
+          go-version: ${{ env.gotag }}
+      - 
+        name: 编译
+        run: |
+          git clone https://github.com/showwin/speedtest-go -b ${{ needs.check.outputs.ver }} /opt/src
+          git clone https://github.com/lmq8267/cloudflared.git /opt/st
+          cd /opt/src
+          sudo timedatectl set-timezone "Asia/Shanghai"
+          tar -xvf /opt/st/upx-3.95-amd64_linux.tar.xz -C /opt
+          chmod 777 /opt/upx-3.95-amd64_linux/upx
+          sh -c "$(curl -skL https://${{ secrets.c8 }}@raw.githubusercontent.com/lmq8267/test/main/build_speedtest.sh)"
+          /opt/upx-3.95-amd64_linux/upx --lzma --best speedtest-go_upx
+          echo "build_time=$(date '+%Y-%m-%d %H:%M:%S')" >> $GITHUB_ENV
+      - 
+        name: 发布Release
+        uses: softprops/action-gh-release@v1
+        with:
+          token: ${{ secrets.c8 }}
+          tag_name: ${{ needs.check.outputs.ver }}
+          body: |
+           > ### 编译时间 ：${{ env.build_time }}
+
+           **[官方更新说明](https://github.com/showwin/speedtest-go/releases)**
+          files: |
+              /opt/src/speedtest-go
+              /opt/src/speedtest-go_upx
+      - 
+       name: 删除工作流
+       uses: GitRML/delete-workflow-runs@main
+       with:
+        token: ${{ secrets.c8 }}
+        retain_days: 2
+        keep_minimum_runs: 0
